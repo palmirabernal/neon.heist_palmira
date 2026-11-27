@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!--
+    viewport-fit=cover lets the phone controller use the full screen.
+    user-scalable=no stops pinch-zoom so the controller never zooms by accident.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#05060f">
+  <title>NEON HEIST</title>
+
+  <!-- Fonts: Orbitron (headings, HUD) and Press Start 2P (arcade accents). Fallbacks are included in case they fail to load. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Press+Start+2P&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+
+  <!--
+    Role detection (runs immediately, before the page is drawn, so there is no flash of the wrong screen).
+    No ?room=XXXXXX in the URL  -> "host"       (laptop, shows the game)
+    ?room=XXXXXX in the URL     -> "controller" (phone, shows the gamepad)
+    game.js reads the same value and does the real work.
+  -->
+  <script>
+    (function () {
+      var room = new URLSearchParams(window.location.search).get("room");
+      document.documentElement.setAttribute("data-role", room ? "controller" : "host");
+    })();
+  </script>
+</head>
+
+<body>
+  <!-- Animated background (styled in style.css): a drifting grid and soft neon glow. -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+  <div class="bg-scanlines" aria-hidden="true"></div>
+
+  <noscript>
+    <p class="noscript">NEON HEIST needs JavaScript. Enable it in your browser and reload.</p>
+  </noscript>
+
+  <!-- ===================================================================
+       LAPTOP MODE: the main game
+       Visible only when <html data-role="host">
+       =================================================================== -->
+  <main id="host-view" class="view" aria-label="NEON HEIST game">
+
+    <!-- Top bar: HUD -->
+    <header class="hud" id="hud">
+      <div class="hud-brand">NEON<span>HEIST</span></div>
+
+      <div class="hud-stats">
+        <div class="hud-item">
+          <span class="hud-label">Time</span>
+          <span class="hud-value" id="hud-time">90</span>
+        </div>
+        <div class="hud-item">
+          <span class="hud-label">Score</span>
+          <span class="hud-value" id="hud-score">0</span>
+        </div>
+        <div class="hud-item">
+          <span class="hud-label">Keys</span>
+          <span class="hud-value" id="hud-keys" aria-label="Keys collected">
+            <i class="key-icon"></i><i class="key-icon"></i><i class="key-icon"></i>
+          </span>
+        </div>
+        <div class="hud-item">
+          <span class="hud-label">Lives</span>
+          <span class="hud-value" id="hud-lives" aria-label="Lives remaining">
+            <i class="life-icon"></i><i class="life-icon"></i><i class="life-icon"></i>
+          </span>
+        </div>
+      </div>
+
+      <div class="hud-side">
+        <div class="conn-pill" id="host-conn" data-state="waiting" role="status" aria-live="polite">
+          <span class="conn-dot"></span>
+          <span id="host-conn-text">Starting up</span>
+        </div>
+        <div class="room-tag">Room <strong id="host-room-code">------</strong></div>
+        <button type="button" class="icon-btn" id="mute-btn" aria-pressed="false" title="Mute or unmute sound">
+          <span id="mute-label">Sound on</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- The game canvas. game.js draws the maze, player, drones and keys here. -->
+    <section class="stage" id="stage">
+      <canvas id="game-canvas" width="960" height="640" aria-label="Game maze"></canvas>
+
+      <!-- Start / lobby screen with QR code -->
+      <div class="overlay" id="overlay-lobby">
+        <div class="panel">
+          <h1 class="title-logo">NEON<span>HEIST</span></h1>
+          <p class="tagline">Steal 3 access keys. Dodge the drones. Reach the vault.</p>
+
+          <div class="lobby-grid">
+            <div class="qr-wrap">
+              <div id="qr-box" class="qr-box" aria-label="QR code for the phone controller">
+                <p class="qr-placeholder" id="qr-placeholder">Generating code…</p>
+              </div>
+              <p class="scan-text">SCAN TO CONNECT YOUR PHONE</p>
+            </div>
+
+            <div class="lobby-info">
+              <div class="info-block">
+                <span class="info-label">Room code</span>
+                <span class="room-big" id="lobby-room-code">------</span>
+              </div>
+
+              <div class="info-block">
+                <span class="info-label">Or open this link on your phone</span>
+                <a class="link-text" id="controller-link" href="#" target="_blank" rel="noopener">Preparing link…</a>
+                <button type="button" class="btn btn-small" id="copy-link-btn">Copy link</button>
+              </div>
+
+              <div class="status-banner" id="lobby-status" data-state="waiting" role="status" aria-live="polite">
+                Waiting for your phone…
+              </div>
+
+              <div class="btn-row">
+                <button type="button" class="btn btn-primary" id="start-btn" disabled>Start heist</button>
+                <button type="button" class="btn" id="retry-host-btn" hidden>Retry connection</button>
+              </div>
+              <p class="hint" id="start-hint">Connect a phone to unlock the start button. Keyboard arrows also work once connected.</p>
+            </div>
+          </div>
+
+          <p class="error-text" id="host-error" role="alert" hidden></p>
+        </div>
+      </div>
+
+      <!-- Countdown shown before play begins -->
+      <div class="overlay overlay-light" id="overlay-countdown" hidden>
+        <div class="countdown" id="countdown-number">3</div>
+      </div>
+
+      <!-- Paused because the phone disconnected mid-game -->
+      <div class="overlay" id="overlay-paused" hidden>
+        <div class="panel panel-small">
+          <h2 class="panel-title">Controller lost</h2>
+          <p>The game is paused. Reopen the controller link on your phone, or scan the code again, to continue.</p>
+          <div class="qr-box qr-box-small" id="qr-box-paused"></div>
+          <p class="hint">Room <strong id="paused-room-code">------</strong></p>
+        </div>
+      </div>
+
+      <!-- Win / game over -->
+      <div class="overlay" id="overlay-end" hidden>
+        <div class="panel panel-small">
+          <h2 class="panel-title" id="end-title">Vault cracked</h2>
+          <p id="end-message">You escaped with all three keys.</p>
+          <dl class="end-stats">
+            <div><dt>Score</dt><dd id="end-score">0</dd></div>
+            <div><dt>Keys</dt><dd id="end-keys">0 / 3</dd></div>
+            <div><dt>Time left</dt><dd id="end-time">0s</dd></div>
+          </dl>
+          <div class="btn-row">
+            <button type="button" class="btn btn-primary" id="restart-btn">Play again</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="host-footer">
+      <span>Keys unlock the exit. Drones cost one life. You have 90 seconds.</span>
+    </footer>
+  </main>
+
+
+  <!-- ===================================================================
+       PHONE MODE: the remote controller
+       Visible only when <html data-role="controller">
+       =================================================================== -->
+  <main id="controller-view" class="view" aria-label="NEON HEIST controller">
+
+    <header class="pad-top">
+      <div class="pad-brand">NEON<span>HEIST</span></div>
+      <div class="conn-pill" id="pad-conn" data-state="connecting" role="status" aria-live="polite">
+        <span class="conn-dot"></span>
+        <span id="pad-conn-text">Connecting…</span>
+      </div>
+    </header>
+
+    <section class="pad-info" aria-label="Game status">
+      <div class="pad-stat"><span>Room</span><strong id="pad-room-code">------</strong></div>
+      <div class="pad-stat"><span>Time</span><strong id="pad-time">--</strong></div>
+      <div class="pad-stat"><span>Score</span><strong id="pad-score">0</strong></div>
+      <div class="pad-stat"><span>Lives</span><strong id="pad-lives">-</strong></div>
+      <div class="pad-stat"><span>Keys</span><strong id="pad-keys">0/3</strong></div>
+    </section>
+
+    <p class="pad-message" id="pad-message" role="status" aria-live="polite">Connecting to the laptop…</p>
+    <p class="error-text" id="pad-error" role="alert" hidden></p>
+
+    <!-- Reconnect appears only when something goes wrong -->
+    <button type="button" class="btn btn-primary btn-wide" id="reconnect-btn" hidden>Reconnect</button>
+
+    <!--
+      D-pad. Each button has data-dir; game.js listens for touchstart / touchend
+      (and mouse / pointer events as a fallback so you can test on a desktop).
+    -->
+    <section class="dpad" id="dpad" aria-label="Directional controls">
+      <button type="button" class="dir dir-up"    data-dir="up"    aria-label="Up"><span class="arrow"></span></button>
+      <button type="button" class="dir dir-left"  data-dir="left"  aria-label="Left"><span class="arrow"></span></button>
+      <button type="button" class="action-btn"    id="action-btn"  aria-label="Action">ACTION</button>
+      <button type="button" class="dir dir-right" data-dir="right" aria-label="Right"><span class="arrow"></span></button>
+      <button type="button" class="dir dir-down"  data-dir="down"  aria-label="Down"><span class="arrow"></span></button>
+    </section>
+
+    <p class="pad-hint">Hold a direction to move. Release to stop. ACTION starts and restarts the game.</p>
+  </main>
+
+
+  <!-- ===================================================================
+       Libraries (exact versions pinned so nothing changes under you)
+       PeerJS  : real-time connection between laptop and phone (WebRTC)
+       qrcodejs: draws the QR code
+       =================================================================== -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <!-- All game and networking code -->
+  <script src="game.js"></script>
+</body>
+</html>
